@@ -1,0 +1,38 @@
+database_path: data/supercharged-coral.db
+object_classes:
+  - Person
+  - Package
+  - Dog
+  - Cat
+  - Car
+  - Truck
+  - Motorcycle
+  - Bicycle
+  - Deer
+  - Bear
+  - Rabbit
+  - Raccoon
+  - Coyote
+  - Bird
+motion:
+  algorithm: frame_differencing
+  threshold: 30
+  min_area: 500
+  blur_kernel: 5
+  morphology_kernel: 5
+cameras:
+  - id: front-door
+    source_type: rtsp
+    uri: rtsp://user:password@192.168.1.10:554/stream1
+    fps: 8
+    width: 3840
+    height: 2160
+    reconnect_attempts: 10
+    ignore_regions:
+      - { x: 0, y: 0, width: 3840, height: 140 }
+  - id: driveway-simulator
+    source_type: synthetic
+    fps: 30
+    width: 1280
+    height: 720
+
