@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import json
 from json import JSONDecodeError
@@ -51,11 +52,14 @@ class FrigateEventDownloader:
         *,
         max_pages: int | None = None,
         include_events_without_clip: bool = False,
+        download_workers: int = 10,
         on_event_count: Callable[[int], None] | None = None,
         on_download: Callable[[str, Path], None] | None = None,
     ) -> FrigateDownloadStats:
         """Download every paged event clip, skipping clips already on disk."""
 
+        if download_workers <= 0:
+            raise ValueError("download_workers must be greater than zero")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         events_seen = 0
         downloaded = 0
@@ -67,6 +71,7 @@ class FrigateEventDownloader:
         if on_event_count is not None:
             on_event_count(len(events))
 
+        pending_downloads: list[tuple[str, Path]] = []
         for event in events:
             events_seen += 1
             event_id = str(event.get("id", "")).strip()
@@ -80,14 +85,23 @@ class FrigateEventDownloader:
             if destination.exists() and destination.stat().st_size > 0:
                 skipped_existing += 1
                 continue
-            try:
-                self.download_clip(event_id, destination)
-            except (HTTPError, URLError, OSError):
-                failed += 1
-            else:
-                if on_download is not None:
-                    on_download(event_id, destination)
-                downloaded += 1
+            pending_downloads.append((event_id, destination))
+
+        with ThreadPoolExecutor(max_workers=download_workers) as executor:
+            futures = {
+                executor.submit(self.download_clip, event_id, destination): (event_id, destination)
+                for event_id, destination in pending_downloads
+            }
+            for future in as_completed(futures):
+                event_id, destination = futures[future]
+                try:
+                    future.result()
+                except (HTTPError, URLError, OSError):
+                    failed += 1
+                else:
+                    if on_download is not None:
+                        on_download(event_id, destination)
+                    downloaded += 1
 
         return FrigateDownloadStats(
             events_seen=events_seen,

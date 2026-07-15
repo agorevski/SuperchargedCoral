@@ -98,6 +98,7 @@ def _download_frigate_events(args: argparse.Namespace) -> int:
         stats = downloader.download_all(
             max_pages=args.max_pages,
             include_events_without_clip=args.include_events_without_clip,
+            download_workers=args.download_workers,
             on_event_count=lambda count: print(f"Found {count} Frigate events"),
             on_download=lambda event_id, path: print(f"Downloaded {event_id} -> {path}"),
         )
@@ -134,6 +135,12 @@ def build_parser() -> argparse.ArgumentParser:
     frigate.add_argument("--page-size", type=int, default=100)
     frigate.add_argument("--max-pages", type=int, default=None)
     frigate.add_argument("--timeout", type=float, default=30.0)
+    frigate.add_argument(
+        "--download-workers",
+        type=int,
+        default=10,
+        help="Maximum parallel MP4 downloads",
+    )
     frigate.add_argument(
         "--api-key",
         default=None,

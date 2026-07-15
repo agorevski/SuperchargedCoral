@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
-from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from threading import Lock, Thread
+from time import sleep
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -61,6 +62,47 @@ class FrigateHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class ConcurrentFrigateHandler(BaseHTTPRequestHandler):
+    active_downloads = 0
+    max_active_downloads = 0
+    lock = Lock()
+
+    def do_GET(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path == "/api/events":
+            self._send_json([{"id": f"event-{index}", "start_time": 20 - index, "has_clip": True} for index in range(20)])
+            return
+
+        if parsed.path.startswith("/api/events/") and parsed.path.endswith("/clip.mp4"):
+            with self.lock:
+                type(self).active_downloads += 1
+                type(self).max_active_downloads = max(type(self).max_active_downloads, type(self).active_downloads)
+            sleep(0.05)
+            try:
+                self.send_response(200)
+                self.send_header("Content-Type", "video/mp4")
+                self.end_headers()
+                self.wfile.write(b"mp4-bytes")
+            finally:
+                with self.lock:
+                    type(self).active_downloads -= 1
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def _send_json(self, payload: object) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
 def test_frigate_downloader_pages_events_and_skips_existing_files(tmp_path):
     server = HTTPServer(("127.0.0.1", 0), FrigateHandler)
     thread = Thread(target=server.serve_forever)
@@ -98,6 +140,32 @@ def test_frigate_downloader_pages_events_and_skips_existing_files(tmp_path):
     assert FrigateHandler.downloaded_paths == ["/api/events/camera%2Fthree/clip.mp4"]
     assert event_counts == [3]
     assert downloaded == [("camera/three", "camera_three.mp4")]
+
+
+def test_frigate_downloader_downloads_with_worker_limit(tmp_path):
+    server = ThreadingHTTPServer(("127.0.0.1", 0), ConcurrentFrigateHandler)
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    ConcurrentFrigateHandler.active_downloads = 0
+    ConcurrentFrigateHandler.max_active_downloads = 0
+
+    try:
+        downloader = FrigateEventDownloader(
+            f"http://127.0.0.1:{server.server_port}",
+            tmp_path,
+            page_size=100,
+        )
+        stats = downloader.download_all(download_workers=10)
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    assert stats.events_seen == 20
+    assert stats.downloaded == 20
+    assert stats.failed == 0
+    assert ConcurrentFrigateHandler.max_active_downloads <= 10
+    assert ConcurrentFrigateHandler.max_active_downloads > 1
 
 
 def test_frigate_downloader_reports_non_json_events_response(tmp_path):

@@ -28,10 +28,10 @@ python3 -m supercharged_coral.cli download-frigate-events --base-url http://frig
 After installation, the packaged console script is also available as `supercharged-coral`.
 
 The Frigate downloader pages through `/api/events` and downloads each available
-event clip from `/api/events/{event_id}/clip.mp4`, skipping any non-empty MP4
-already present in the output directory. Set `FRIGATE_API_KEY` or pass
-`--api-key` for bearer-token authentication, and repeat `--header "Name: value"`
-for other Frigate proxy headers.
+event clip from `/api/events/{event_id}/clip.mp4` with 10 parallel workers,
+skipping any non-empty MP4 already present in the output directory. Set
+`FRIGATE_API_KEY` or pass `--api-key` for bearer-token authentication, and
+repeat `--header "Name: value"` for other Frigate proxy headers.
 
 ## Documentation
 
