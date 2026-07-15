@@ -94,11 +94,14 @@ def _download_frigate_events(args: argparse.Namespace) -> int:
         page_size=args.page_size,
         timeout=args.timeout,
     )
+    download_workers = args.download_workers
+    if download_workers is None:
+        download_workers = 50 if args.media == "snapshot" else 10
     try:
         stats = downloader.download_all(
             max_pages=args.max_pages,
             include_events_without_clip=args.include_events_without_clip,
-            download_workers=args.download_workers,
+            download_workers=download_workers,
             media_type=args.media,
             on_event_count=lambda count: print(f"Found {count} Frigate events"),
             on_download=lambda event_id, path: print(f"Downloaded {event_id} -> {path}"),
@@ -145,8 +148,8 @@ def build_parser() -> argparse.ArgumentParser:
     frigate.add_argument(
         "--download-workers",
         type=int,
-        default=10,
-        help="Maximum parallel media downloads",
+        default=None,
+        help="Maximum parallel media downloads; defaults to 10 for clips and 50 for snapshots",
     )
     frigate.add_argument(
         "--api-key",

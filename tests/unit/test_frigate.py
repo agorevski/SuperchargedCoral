@@ -8,6 +8,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from supercharged_coral.cli import _download_frigate_events, build_parser
 from supercharged_coral.integrations.frigate import FrigateEventDownloader
 
 
@@ -206,6 +207,36 @@ def test_frigate_downloader_downloads_with_worker_limit(tmp_path):
     assert stats.failed == 0
     assert ConcurrentFrigateHandler.max_active_downloads <= 10
     assert ConcurrentFrigateHandler.max_active_downloads > 1
+
+
+def test_frigate_cli_defaults_to_ten_workers_for_clips(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_download_all(self: FrigateEventDownloader, **kwargs: object):
+        captured.update(kwargs)
+        return type("Stats", (), {"__dict__": {"failed": 0}, "failed": 0})()
+
+    monkeypatch.setattr(FrigateEventDownloader, "download_all", fake_download_all)
+    args = build_parser().parse_args(["download-frigate-events", "--base-url", "http://frigate"])
+
+    assert _download_frigate_events(args) == 0
+    assert captured["media_type"] == "clip"
+    assert captured["download_workers"] == 10
+
+
+def test_frigate_cli_defaults_to_fifty_workers_for_snapshots(monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_download_all(self: FrigateEventDownloader, **kwargs: object):
+        captured.update(kwargs)
+        return type("Stats", (), {"__dict__": {"failed": 0}, "failed": 0})()
+
+    monkeypatch.setattr(FrigateEventDownloader, "download_all", fake_download_all)
+    args = build_parser().parse_args(["download-frigate-events", "--base-url", "http://frigate", "--media", "snapshot"])
+
+    assert _download_frigate_events(args) == 0
+    assert captured["media_type"] == "snapshot"
+    assert captured["download_workers"] == 50
 
 
 def test_frigate_downloader_reports_non_json_events_response(tmp_path):

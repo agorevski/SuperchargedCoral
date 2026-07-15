@@ -31,10 +31,10 @@ After installation, the packaged console script is also available as `supercharg
 The Frigate downloader pages through `/api/events` and downloads each available
 event clip from `/api/events/{event_id}/clip.mp4`, or each best event snapshot
 from `/api/events/{event_id}/snapshot.jpg` with `--media snapshot`, using 10
-parallel workers. It skips any non-empty MP4/JPG already present in the output
-directory. Set `FRIGATE_API_KEY` or pass `--api-key` for bearer-token
-authentication, and repeat `--header "Name: value"` for other Frigate proxy
-headers.
+parallel workers for clips and 50 for snapshots by default. It skips any
+non-empty MP4/JPG already present in the output directory. Set `FRIGATE_API_KEY`
+or pass `--api-key` for bearer-token authentication, and repeat
+`--header "Name: value"` for other Frigate proxy headers.
 
 ## Documentation
 
