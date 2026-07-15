@@ -99,6 +99,7 @@ def _download_frigate_events(args: argparse.Namespace) -> int:
             max_pages=args.max_pages,
             include_events_without_clip=args.include_events_without_clip,
             download_workers=args.download_workers,
+            media_type=args.media,
             on_event_count=lambda count: print(f"Found {count} Frigate events"),
             on_download=lambda event_id, path: print(f"Downloaded {event_id} -> {path}"),
         )
@@ -128,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     frigate = subparsers.add_parser(
         "download-frigate-events",
         aliases=["download-friday-events"],
-        help="Download Frigate event MP4 clips, skipping clips already on disk",
+        help="Download Frigate event MP4 clips or JPG snapshots, skipping media already on disk",
     )
     frigate.add_argument("--base-url", required=True, help="Base Frigate URL, e.g. http://frigate:5000")
     frigate.add_argument("--output-dir", default="data/frigate-events")
@@ -136,10 +137,16 @@ def build_parser() -> argparse.ArgumentParser:
     frigate.add_argument("--max-pages", type=int, default=None)
     frigate.add_argument("--timeout", type=float, default=30.0)
     frigate.add_argument(
+        "--media",
+        choices=["clip", "snapshot"],
+        default="clip",
+        help="Download event clips as MP4s or best snapshots as JPGs",
+    )
+    frigate.add_argument(
         "--download-workers",
         type=int,
         default=10,
-        help="Maximum parallel MP4 downloads",
+        help="Maximum parallel media downloads",
     )
     frigate.add_argument(
         "--api-key",
@@ -154,8 +161,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     frigate.add_argument(
         "--include-events-without-clip",
+        "--include-events-without-media",
+        dest="include_events_without_clip",
         action="store_true",
-        help="Attempt clip downloads even when the event reports has_clip=false",
+        help="Attempt downloads even when the event reports the selected media is unavailable",
     )
     frigate.set_defaults(func=_download_frigate_events)
     return parser

@@ -10,10 +10,12 @@ from json import JSONDecodeError
 from pathlib import Path
 import re
 import shutil
-from typing import Any
+from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode, urljoin
 from urllib.request import Request, urlopen
+
+FrigateMediaType = Literal["clip", "snapshot"]
 
 
 @dataclass(frozen=True)
@@ -23,12 +25,12 @@ class FrigateDownloadStats:
     events_seen: int = 0
     downloaded: int = 0
     skipped_existing: int = 0
-    skipped_without_clip: int = 0
+    skipped_without_media: int = 0
     failed: int = 0
 
 
 class FrigateEventDownloader:
-    """Download MP4 clips for events discovered from the Frigate events API."""
+    """Download media for events discovered from the Frigate events API."""
 
     def __init__(
         self,
@@ -53,18 +55,20 @@ class FrigateEventDownloader:
         max_pages: int | None = None,
         include_events_without_clip: bool = False,
         download_workers: int = 10,
+        media_type: FrigateMediaType = "clip",
         on_event_count: Callable[[int], None] | None = None,
         on_download: Callable[[str, Path], None] | None = None,
     ) -> FrigateDownloadStats:
-        """Download every paged event clip, skipping clips already on disk."""
+        """Download every paged event media item, skipping files already on disk."""
 
         if download_workers <= 0:
             raise ValueError("download_workers must be greater than zero")
+        media = _media_settings(media_type)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         events_seen = 0
         downloaded = 0
         skipped_existing = 0
-        skipped_without_clip = 0
+        skipped_without_media = 0
         failed = 0
 
         events = list(self.iter_events(max_pages=max_pages))
@@ -78,10 +82,10 @@ class FrigateEventDownloader:
             if not event_id:
                 failed += 1
                 continue
-            if event.get("has_clip") is False and not include_events_without_clip:
-                skipped_without_clip += 1
+            if event.get(media.availability_key) is False and not include_events_without_clip:
+                skipped_without_media += 1
                 continue
-            destination = self.output_dir / f"{_safe_filename(event_id)}.mp4"
+            destination = self.output_dir / f"{_safe_filename(event_id)}.{media.extension}"
             if destination.exists() and destination.stat().st_size > 0:
                 skipped_existing += 1
                 continue
@@ -89,7 +93,7 @@ class FrigateEventDownloader:
 
         with ThreadPoolExecutor(max_workers=download_workers) as executor:
             futures = {
-                executor.submit(self.download_clip, event_id, destination): (event_id, destination)
+                executor.submit(self.download_media, event_id, destination, media_type): (event_id, destination)
                 for event_id, destination in pending_downloads
             }
             for future in as_completed(futures):
@@ -107,7 +111,7 @@ class FrigateEventDownloader:
             events_seen=events_seen,
             downloaded=downloaded,
             skipped_existing=skipped_existing,
-            skipped_without_clip=skipped_without_clip,
+            skipped_without_media=skipped_without_media,
             failed=failed,
         )
 
@@ -149,10 +153,16 @@ class FrigateEventDownloader:
     def download_clip(self, event_id: str, destination: Path) -> None:
         """Download one event clip to a destination path using an atomic replace."""
 
+        self.download_media(event_id, destination, "clip")
+
+    def download_media(self, event_id: str, destination: Path, media_type: FrigateMediaType) -> None:
+        """Download one event media item to a destination path using an atomic replace."""
+
+        media = _media_settings(media_type)
         destination.parent.mkdir(parents=True, exist_ok=True)
         tmp_destination = destination.with_suffix(destination.suffix + ".part")
-        url = self._url(f"/api/events/{quote(event_id, safe='')}/clip.mp4")
-        request = Request(url, headers=self.headers | {"Accept": "video/mp4"})
+        url = self._url(f"/api/events/{quote(event_id, safe='')}/{media.endpoint}")
+        request = Request(url, headers=self.headers | {"Accept": media.accept})
         with urlopen(request, timeout=self.timeout) as response, tmp_destination.open("wb") as output:
             shutil.copyfileobj(response, output)
         tmp_destination.replace(destination)
@@ -180,3 +190,29 @@ class FrigateEventDownloader:
 def _safe_filename(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value).strip("._")
     return safe or "event"
+
+
+@dataclass(frozen=True)
+class _MediaSettings:
+    endpoint: str
+    extension: str
+    accept: str
+    availability_key: str
+
+
+def _media_settings(media_type: FrigateMediaType) -> _MediaSettings:
+    if media_type == "clip":
+        return _MediaSettings(
+            endpoint="clip.mp4",
+            extension="mp4",
+            accept="video/mp4",
+            availability_key="has_clip",
+        )
+    if media_type == "snapshot":
+        return _MediaSettings(
+            endpoint="snapshot.jpg",
+            extension="jpg",
+            accept="image/jpeg",
+            availability_key="has_snapshot",
+        )
+    raise ValueError(f"unsupported Frigate media type: {media_type}")

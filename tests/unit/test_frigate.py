@@ -22,12 +22,12 @@ class FrigateHandler(BaseHTTPRequestHandler):
             if before is None:
                 self._send_json(
                     [
-                        {"id": "camera/three", "start_time": 3.0, "has_clip": True},
-                        {"id": "camera-two", "start_time": 2.0, "has_clip": False},
+                        {"id": "camera/three", "start_time": 3.0, "has_clip": True, "has_snapshot": True},
+                        {"id": "camera-two", "start_time": 2.0, "has_clip": False, "has_snapshot": False},
                     ]
                 )
             elif float(before) == 2.0:
-                self._send_json([{"id": "camera-one", "start_time": 1.0, "has_clip": True}])
+                self._send_json([{"id": "camera-one", "start_time": 1.0, "has_clip": True, "has_snapshot": True}])
             else:
                 self._send_json([])
             return
@@ -45,6 +45,14 @@ class FrigateHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "video/mp4")
             self.end_headers()
             self.wfile.write(b"mp4-bytes")
+            return
+
+        if parsed.path.startswith("/api/events/") and parsed.path.endswith("/snapshot.jpg"):
+            self.downloaded_paths.append(parsed.path)
+            self.send_response(200)
+            self.send_header("Content-Type", "image/jpeg")
+            self.end_headers()
+            self.wfile.write(b"jpg-bytes")
             return
 
         self.send_response(404)
@@ -133,13 +141,45 @@ def test_frigate_downloader_pages_events_and_skips_existing_files(tmp_path):
     assert stats.events_seen == 3
     assert stats.downloaded == 1
     assert stats.skipped_existing == 1
-    assert stats.skipped_without_clip == 1
+    assert stats.skipped_without_media == 1
     assert stats.failed == 0
     assert (output_dir / "camera_three.mp4").read_bytes() == b"mp4-bytes"
     assert existing.read_bytes() == b"already-here"
     assert FrigateHandler.downloaded_paths == ["/api/events/camera%2Fthree/clip.mp4"]
     assert event_counts == [3]
     assert downloaded == [("camera/three", "camera_three.mp4")]
+
+
+def test_frigate_downloader_downloads_best_event_snapshots(tmp_path):
+    server = HTTPServer(("127.0.0.1", 0), FrigateHandler)
+    thread = Thread(target=server.serve_forever)
+    thread.start()
+    FrigateHandler.downloaded_paths = []
+    output_dir = tmp_path / "snapshots"
+    output_dir.mkdir()
+    existing = output_dir / "camera-one.jpg"
+    existing.write_bytes(b"already-here")
+
+    try:
+        downloader = FrigateEventDownloader(
+            f"http://127.0.0.1:{server.server_port}",
+            output_dir,
+            page_size=2,
+        )
+        stats = downloader.download_all(media_type="snapshot")
+    finally:
+        server.shutdown()
+        thread.join()
+        server.server_close()
+
+    assert stats.events_seen == 3
+    assert stats.downloaded == 1
+    assert stats.skipped_existing == 1
+    assert stats.skipped_without_media == 1
+    assert stats.failed == 0
+    assert (output_dir / "camera_three.jpg").read_bytes() == b"jpg-bytes"
+    assert existing.read_bytes() == b"already-here"
+    assert FrigateHandler.downloaded_paths == ["/api/events/camera%2Fthree/snapshot.jpg"]
 
 
 def test_frigate_downloader_downloads_with_worker_limit(tmp_path):
