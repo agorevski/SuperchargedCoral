@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import sys
 
 from supercharged_coral.camera_service.providers import SyntheticCameraSource
 from supercharged_coral.common.config import CameraConfig, MotionConfig
@@ -93,10 +94,16 @@ def _download_frigate_events(args: argparse.Namespace) -> int:
         page_size=args.page_size,
         timeout=args.timeout,
     )
-    stats = downloader.download_all(
-        max_pages=args.max_pages,
-        include_events_without_clip=args.include_events_without_clip,
-    )
+    try:
+        stats = downloader.download_all(
+            max_pages=args.max_pages,
+            include_events_without_clip=args.include_events_without_clip,
+            on_event_count=lambda count: print(f"Found {count} Frigate events"),
+            on_download=lambda event_id, path: print(f"Downloaded {event_id} -> {path}"),
+        )
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(json.dumps(stats.__dict__, sort_keys=True))
     return 1 if stats.failed else 0
 

@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 import json
+from json import JSONDecodeError
 from pathlib import Path
 import re
 import shutil
@@ -50,6 +51,8 @@ class FrigateEventDownloader:
         *,
         max_pages: int | None = None,
         include_events_without_clip: bool = False,
+        on_event_count: Callable[[int], None] | None = None,
+        on_download: Callable[[str, Path], None] | None = None,
     ) -> FrigateDownloadStats:
         """Download every paged event clip, skipping clips already on disk."""
 
@@ -60,7 +63,11 @@ class FrigateEventDownloader:
         skipped_without_clip = 0
         failed = 0
 
-        for event in self.iter_events(max_pages=max_pages):
+        events = list(self.iter_events(max_pages=max_pages))
+        if on_event_count is not None:
+            on_event_count(len(events))
+
+        for event in events:
             events_seen += 1
             event_id = str(event.get("id", "")).strip()
             if not event_id:
@@ -78,6 +85,8 @@ class FrigateEventDownloader:
             except (HTTPError, URLError, OSError):
                 failed += 1
             else:
+                if on_download is not None:
+                    on_download(event_id, destination)
                 downloaded += 1
 
         return FrigateDownloadStats(
@@ -141,7 +150,14 @@ class FrigateEventDownloader:
             url = f"{url}?{query}"
         request = Request(url, headers=self.headers | {"Accept": "application/json"})
         with urlopen(request, timeout=self.timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
+            body = response.read()
+        try:
+            return json.loads(body.decode("utf-8"))
+        except (JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(
+                f"Frigate events endpoint did not return JSON: {url}. "
+                "Use the Frigate server root for --base-url, not a UI path like /settings."
+            ) from exc
 
     def _url(self, path: str) -> str:
         return urljoin(self.base_url, path.lstrip("/"))
