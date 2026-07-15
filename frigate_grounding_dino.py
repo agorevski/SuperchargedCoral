@@ -33,7 +33,7 @@ _worker_state = local()
 
 IMAGE_DIR = "./frigate-dataset/"
 
-DATASET_NAME = "frigate_grounding_dino7"
+DATASET_NAME = "frigate_grounding_dino8"
 
 MODEL_ID = "IDEA-Research/grounding-dino-base"
 
@@ -635,6 +635,36 @@ def sample_is_processed(sample):
     return sample[LABEL_FIELD] is not None
 
 
+def apply_detection_tags(sample):
+
+    if LABEL_FIELD not in sample or sample[LABEL_FIELD] is None:
+
+        sample.tags = []
+        return
+
+    labels = sorted(
+        {
+            detection.label
+            for detection in sample[LABEL_FIELD].detections
+            if detection.label
+        }
+    )
+
+    sample.tags = labels
+
+    for detection in sample[LABEL_FIELD].detections:
+
+        detection.tags = [detection.label] if detection.label else []
+
+
+def apply_detection_tags_to_dataset(dataset):
+
+    for sample in dataset:
+
+        apply_detection_tags(sample)
+        sample.save()
+
+
 
 # ============================================================
 # Main
@@ -648,17 +678,6 @@ def main():
     )
 
     dataset = load_dataset()
-
-
-    logger.info(
-        "Launching FiftyOne..."
-    )
-
-
-    session = launch_fiftyone(
-        dataset
-    )
-
 
     samples_to_process = [
         sample
@@ -694,6 +713,22 @@ def main():
 
     logger.info(
         "Inference complete"
+    )
+
+    logger.info(
+        "Applying detection tags..."
+    )
+
+    apply_detection_tags_to_dataset(
+        dataset
+    )
+
+    logger.info(
+        "Launching FiftyOne..."
+    )
+
+    session = launch_fiftyone(
+        dataset
     )
 
     logger.info(
