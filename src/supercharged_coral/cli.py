@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 from pathlib import Path
 
 from supercharged_coral.camera_service.providers import SyntheticCameraSource
 from supercharged_coral.common.config import CameraConfig, MotionConfig
 from supercharged_coral.dataset.database import SecurityDatabase
+from supercharged_coral.integrations.frigate import FrigateEventDownloader
 from supercharged_coral.motion_service.algorithms import FrameDifferencingMotionDetector
 from supercharged_coral.pipeline.async_pipeline import AsyncFramePipeline, RegionEchoDetector
 from supercharged_coral.tracker.sort_like import SortLikeTracker
@@ -65,6 +67,40 @@ def _smoke_test(args: argparse.Namespace) -> int:
     return asyncio.run(_smoke_test_async(args))
 
 
+def _parse_headers(values: list[str]) -> dict[str, str]:
+    headers: dict[str, str] = {}
+    for value in values:
+        if ":" not in value:
+            raise argparse.ArgumentTypeError(f"header must be in 'Name: value' format: {value}")
+        name, header_value = value.split(":", 1)
+        name = name.strip()
+        if not name:
+            raise argparse.ArgumentTypeError(f"header name cannot be empty: {value}")
+        headers[name] = header_value.strip()
+    return headers
+
+
+def _download_frigate_events(args: argparse.Namespace) -> int:
+    headers = _parse_headers(args.header)
+    api_key = args.api_key or os.environ.get("FRIGATE_API_KEY")
+    if api_key and "Authorization" not in headers:
+        headers["Authorization"] = " ".join(("Bearer", api_key))
+
+    downloader = FrigateEventDownloader(
+        args.base_url,
+        args.output_dir,
+        headers=headers,
+        page_size=args.page_size,
+        timeout=args.timeout,
+    )
+    stats = downloader.download_all(
+        max_pages=args.max_pages,
+        include_events_without_clip=args.include_events_without_clip,
+    )
+    print(json.dumps(stats.__dict__, sort_keys=True))
+    return 1 if stats.failed else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="supercharged-coral")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -80,13 +116,41 @@ def build_parser() -> argparse.ArgumentParser:
     smoke.add_argument("--height", type=int, default=180)
     smoke.add_argument("--database", default=":memory:")
     smoke.set_defaults(func=_smoke_test)
+
+    frigate = subparsers.add_parser(
+        "download-frigate-events",
+        aliases=["download-friday-events"],
+        help="Download Frigate event MP4 clips, skipping clips already on disk",
+    )
+    frigate.add_argument("--base-url", required=True, help="Base Frigate URL, e.g. http://frigate:5000")
+    frigate.add_argument("--output-dir", default="data/frigate-events")
+    frigate.add_argument("--page-size", type=int, default=100)
+    frigate.add_argument("--max-pages", type=int, default=None)
+    frigate.add_argument("--timeout", type=float, default=30.0)
+    frigate.add_argument(
+        "--api-key",
+        default=None,
+        help="Frigate API credential; defaults to FRIGATE_API_KEY when set",
+    )
+    frigate.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        help="Additional request header in 'Name: value' format; repeatable",
+    )
+    frigate.add_argument(
+        "--include-events-without-clip",
+        action="store_true",
+        help="Attempt clip downloads even when the event reports has_clip=false",
+    )
+    frigate.set_defaults(func=_download_frigate_events)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if args.database != ":memory:":
+    if getattr(args, "database", None) not in (None, ":memory:"):
         Path(args.database).parent.mkdir(parents=True, exist_ok=True)
     return args.func(args)
 
